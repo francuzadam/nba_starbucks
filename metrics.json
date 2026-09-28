@@ -1,0 +1,15 @@
+{
+  "classification": {
+    "roc_auc": 0.7682462927633746,
+    "accuracy": 0.7087085113374959,
+    "precision": 0.6631138975966562,
+    "recall": 0.5294510261972301,
+    "accuracy_baseline_majority_class": 0.6061123890897141
+  },
+  "next_best_offer": {
+    "success_rate_random_offer": 0.3938876109102859,
+    "success_rate_best_single_offer": 0.6469428007889546,
+    "success_rate_model_pick": 0.658360655737705,
+    "rows_where_model_pick_was_sent": 1525
+  }
+}
