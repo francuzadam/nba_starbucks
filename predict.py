@@ -1,7 +1,7 @@
-"""Next best offer for new customers:  python predict.py
+"""
+Prediction for new customers based on saved ML model.
 
-Input: raw customer rows in the profile.json format
-       (id, age, gender, income, became_member_on).
+Input: raw customer rows in the right format
 Output: the recommended offer and its predicted success probability per customer.
 """
 import joblib
