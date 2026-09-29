@@ -79,20 +79,18 @@ def load_transcript() -> pd.DataFrame:
     return df.drop(columns="value")
 
 
-# --------------------------------------------------------------------------- #
-# 4. Target: was the offer viewed and then acted on within its validity window?
-# --------------------------------------------------------------------------- #
+# Create target variable
 def build_labels(events: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
-    """One row per received offer with success = 1 if
+    """One row per received offer.
+    Success = 1 if
     - the customer viewed it within the validity window, AND
     - after viewing (still within the window) they
         * completed it (bogo / discount), or
         * made any transaction (informational offers have no 'completed' event).
-    Completing an offer without viewing it is NOT a success: the customer would
-    have bought anyway, so the offer did not influence them."""
+    """
     rec = events[events["event"] == "offer received"][["person", "offer_id", "time"]]
     rec = rec.rename(columns={"time": "t_received"}).reset_index(drop=True)
-    rec["row_id"] = rec.index
+    rec["row_id"] = rec.index # Create unique id because a customer can get the same offer multiple times
     rec = rec.merge(offers[["offer_id", "offer_type", "duration_days"]], on="offer_id")
     rec["t_end"] = rec["t_received"] + rec["duration_days"] * 24  # time is in hours
 
@@ -103,28 +101,26 @@ def build_labels(events: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
         return m.groupby("row_id")["time"].min()
 
     viewed = events[events["event"] == "offer viewed"][["person", "offer_id", "time"]]
-    rec["t_viewed"] = rec["row_id"].map(first_in_window(viewed, "t_received", ["person", "offer_id"]))
+    rec["t_viewed"] = rec["row_id"].map(first_in_window(viewed, "t_received", ["person", "offer_id"])) # first viewed log within the validity window, else NaN
 
     completed = events[events["event"] == "offer completed"][["person", "offer_id", "time"]]
-    t_completed = first_in_window(completed, "t_viewed", ["person", "offer_id"])
+    t_completed = first_in_window(completed, "t_viewed", ["person", "offer_id"]) # is completed within the validity window
 
     transactions = events[events["event"] == "transaction"][["person", "time"]]
-    t_transaction = first_in_window(transactions, "t_viewed", ["person"])
+    t_transaction = first_in_window(transactions, "t_viewed", ["person"]) # is any transaction within the validity window
 
     is_info = rec["offer_type"] == "informational"
-    acted = np.where(is_info, rec["row_id"].isin(t_transaction.index), rec["row_id"].isin(t_completed.index))
-    rec[TARGET] = (rec["t_viewed"].notna() & acted).astype(int)
+    acted = np.where(is_info, rec["row_id"].isin(t_transaction.index), rec["row_id"].isin(t_completed.index)) # if the offer is informational I check the t_transaction, else t_completed
+    rec[TARGET] = (rec["t_viewed"].notna() & acted).astype(int) # 1 if t_viewed is not null and acted is True
 
     return rec[["person", "offer_id", "t_received", TARGET]]
 
 
-# --------------------------------------------------------------------------- #
-# 5. Put it together
-# --------------------------------------------------------------------------- #
+# Create final dataset
 def build_dataset() -> pd.DataFrame:
-    offers, customers, events = load_portfolio(), load_profile(), load_transcript()
-    labels = build_labels(events, offers)
-    df = labels.merge(customers, on="person").merge(offers, on="offer_id")
+    offers, customers, events = load_portfolio(), load_profile(), load_transcript() # Load JSON data
+    labels = build_labels(events, offers) # Create target variable based on event logs and offers
+    df = labels.merge(customers, on="person").merge(offers, on="offer_id") # Create final df
     return df[["person", "offer_id", "t_received"] + FEATURES + [TARGET]]
 
 
