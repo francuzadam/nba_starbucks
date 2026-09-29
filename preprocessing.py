@@ -1,12 +1,10 @@
-"""Preprocessing for the Starbucks Next Best Offer prototype.
-
-Reads the 3 raw JSON files from data/, cleans them, builds the target variable from the
-event log and writes one modelling table: one row per (customer, received offer).
-
-    python preprocessing.py   ->   data/processed.csv
+"""
+Preprocessing for the Next Best Action based on Starbucks dataset .
+Reads the 3 raw JSON files from data folder, cleans them, builds the target variable from the event log and writes one modelling table: one row per customer, received offer.
+Input: python preprocessing.py 
+Output: data/processed.csv
 """
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
@@ -20,70 +18,64 @@ FEATURES = CUSTOMER_FEATURES + OFFER_FEATURES
 TARGET = "success"
 CATEGORIES = {"gender": ["F", "M", "O", "U"], "offer_type": ["bogo", "discount", "informational"]}
 
-
 def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Feature matrix for the model. Fixed categories so training and prediction match
-    (LightGBM handles pandas categoricals and NaN natively)."""
+    """Feature matrix for the model. Fixed categories so training and prediction match (LightGBM handles pandas categoricals and NaN natively)."""
     X = df[FEATURES].copy()
     for col, cats in CATEGORIES.items():
         X[col] = pd.Categorical(X[col], categories=cats)
     return X
 
-
 def read_json(name: str) -> pd.DataFrame:
+    """Import JSON files from DATA_DIR into a DataFrame."""
     return pd.read_json(DATA_DIR / name, orient="records", lines=True)
 
 
-# --------------------------------------------------------------------------- #
-# 1. Offers
-# --------------------------------------------------------------------------- #
+# Import porfolio JSON applying One-Hot Encoding
 def load_portfolio() -> pd.DataFrame:
     df = read_json("portfolio.json").rename(columns={"id": "offer_id", "duration": "duration_days"})
-    for c in CHANNELS:  # list column -> one binary flag per channel
+    for c in CHANNELS:
         df[f"ch_{c}"] = df["channels"].apply(lambda x, c=c: int(c in x))
     return df.drop(columns="channels")
 
 
-# --------------------------------------------------------------------------- #
-# 2. Customers: missing values, noisy age, membership length
-# --------------------------------------------------------------------------- #
+# Handle missing, noisy values, and outliers
 def clean_profile(df: pd.DataFrame, reference_date: pd.Timestamp) -> pd.DataFrame:
     """Clean raw profile rows (also used for new customers at prediction time)."""
     df = df.copy()
 
-    # age == 118 is a placeholder used when the customer gave no data -> missing
+    # In case of age 118 means that it is missing, replace with NaN and filter the customer between 18 and 100 because these could be relevant
     df["age"] = df["age"].replace(118, np.nan).clip(18, 100)
 
-    # missing gender -> own category; missing income -> keep NaN (LightGBM handles it) + flag
+    # For gender I use a unique category for missing values called U, the missing income could be relevant information so I create a new feature for it and keep tha NaN
     df["gender"] = df["gender"].fillna("U")
     df["income_missing"] = df["income"].isna().astype(int)
 
-    # became_member_on is an int like 20170815 -> membership length in days
+    # Membership length is essential for ML model and calculate from registration date
     member_since = pd.to_datetime(df["became_member_on"].astype(str), format="%Y%m%d")
     df["membership_days"] = (reference_date - member_since).dt.days
 
     return df.drop(columns="became_member_on")
 
-
+# Membership reference date is the maximum of became_member_on feature
 def membership_reference_date() -> pd.Timestamp:
     """Latest membership date in the training data, used as 'today' for membership_days."""
     raw = read_json("profile.json")["became_member_on"].astype(str)
     return pd.to_datetime(raw, format="%Y%m%d").max()
 
-
+# Load customer data using clean_profile and membership_reference_date funcions
 def load_profile() -> pd.DataFrame:
     df = read_json("profile.json").rename(columns={"id": "person"})
     return clean_profile(df, membership_reference_date())
 
-
-# --------------------------------------------------------------------------- #
-# 3. Event log -> events by type
-# --------------------------------------------------------------------------- #
+# Import Event logs
 def load_transcript() -> pd.DataFrame:
     df = read_json("transcript.json")
+
+    # value column is a dictionary, I have to collect the offer_id and amount features
     # noisy key naming: 'offer id' for received/viewed, 'offer_id' for completed
     df["offer_id"] = df["value"].apply(lambda v: v.get("offer id", v.get("offer_id")))
     df["amount"] = df["value"].apply(lambda v: v.get("amount"))
+    
     return df.drop(columns="value")
 
 
