@@ -5,14 +5,13 @@ The next best offer for a customer is the offer with the highest predicted proba
 For evaluation, the model's performance is compared against two baseline strategies:
 - the historical/random offer assignment success rate,
 - the best single-offer strategy, where the same offer is assigned to every customer.
- 
+
 The resulting uplift shows the added value of personalized offer recommendations compared to simpler marketing approaches.
 Input: processed.csv
 Output: Classification metrics, Feature Importance, NBA metrics
 """
 import json
 import joblib
-import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
@@ -24,7 +23,8 @@ MODEL_PATH = ROOT / "model.joblib"
 PARAMS = dict(n_estimators=300, learning_rate=0.05, num_leaves=31, min_child_samples=50,
               subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
               random_state=42, verbose=-1)
- 
+
+
 def score_all_offers(model, customers: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
     """Calculate the probability of every offer for every customer."""
     rows = customers[CUSTOMER_FEATURES].reset_index(drop=True).rename_axis("row").reset_index()
@@ -33,10 +33,9 @@ def score_all_offers(model, customers: pd.DataFrame, offers: pd.DataFrame) -> pd
     return grid.pivot(index="row", columns="offer_id", values="p")
 
 
-def evaluate_nba(model, test, offers, best_single_offer) -> dict:
+def evaluate_nba(test, recommended, best_single_offer) -> dict:
     """Offers were assigned roughly at random, so the observed success rate of customers
     who happened to receive the model's pick estimates how the model's policy would do."""
-    recommended = score_all_offers(model, test, offers).idxmax(axis=1).to_numpy() # NBA recommended offer
     got = test["offer_id"].to_numpy() # real marketing offer
     y = test[TARGET].to_numpy() # target variable
     match = got == recommended # do the recommended and real offer march
@@ -73,10 +72,10 @@ def main():
     }
 
     # 2. Next Best Offer evaluation vs. simple baselines
+    picks = score_all_offers(model, test, offers).idxmax(axis=1) # the offer with the highest probability
     best_single_offer = train.groupby("offer_id")[TARGET].mean().idxmax()
-    nba = evaluate_nba(model, test, offers, best_single_offer)
+    nba = evaluate_nba(test, picks.to_numpy(), best_single_offer)
 
-    picks = score_all_offers(model, test, offers).idxmax(axis=1)
     print("\nRecommended offer distribution:")
     print(picks.value_counts(normalize=True).round(3))
 

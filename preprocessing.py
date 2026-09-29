@@ -12,29 +12,31 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 OUTPUT = DATA_DIR / "processed.csv"
 
 CHANNELS = ["email", "mobile", "social", "web"]
-
 HISTORY_FEATURES = ["past_tx_count", "past_spend_total", "past_spend_mean", "past_spend_max",
                     "days_since_last_tx", "past_offers_received", "past_views", "past_view_rate"]
-
 CUSTOMER_FEATURES = ["age", "gender", "income", "income_missing", "membership_days"] + HISTORY_FEATURES
 OFFER_FEATURES = ["offer_type", "difficulty", "reward", "duration_days"] + [f"ch_{c}" for c in CHANNELS]
 FEATURES = CUSTOMER_FEATURES + OFFER_FEATURES
 TARGET = "success"
 CATEGORIES = {"gender": ["F", "M", "O", "U"], "offer_type": ["bogo", "discount", "informational"]}
 
+
+# Compare the spending habit of the customer to the conditions of the offer
 def add_interactions(X: pd.DataFrame) -> pd.DataFrame:
-    diff = X["difficulty"].replace(0, np.nan)      # informational: difficulty = 0
-    X["spend_vs_diff"] = X["past_spend_mean"] / diff
-    X["max_spend_ge_diff"] = (X["past_spend_max"] >= X["difficulty"]).astype(float).where(X["past_spend_max"].notna())
-    X["reward_ratio"] = X["reward"] / diff
-    X["diff_per_day"] = X["difficulty"] / X["duration_days"]
+    difficulty = X["difficulty"].replace(0, np.nan)  # informational offers have 0 difficulty, division would fail
+    X["spend_vs_diff"] = X["past_spend_mean"] / difficulty  # can the customer reach the spending limit
+    X["reward_ratio"] = X["reward"] / difficulty  # how generous is the offer
+    X["diff_per_day"] = X["difficulty"] / X["duration_days"]  # how much has to be spent per day
     return X
 
-def model_matrix(df):
+
+def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """Feature matrix for the model. Fixed categories so training and prediction match (LightGBM handles pandas categoricals and NaN natively)."""
     X = df[FEATURES].copy()
     for col, cats in CATEGORIES.items():
         X[col] = pd.Categorical(X[col], categories=cats)
     return add_interactions(X)
+
 
 def read_json(name: str) -> pd.DataFrame:
     """Import JSON files from DATA_DIR into a DataFrame."""
@@ -45,7 +47,7 @@ def read_json(name: str) -> pd.DataFrame:
 def load_portfolio() -> pd.DataFrame:
     df = read_json("portfolio.json").rename(columns={"id": "offer_id", "duration": "duration_days"})
     for c in CHANNELS:
-        df[f"ch_{c}"] = df["channels"].apply(lambda x, c=c: int(c in x))
+        df[f"ch_{c}"] = df["channels"].apply(lambda x: int(c in x))
     return df.drop(columns="channels")
 
 
@@ -67,16 +69,19 @@ def clean_profile(df: pd.DataFrame, reference_date: pd.Timestamp) -> pd.DataFram
 
     return df.drop(columns="became_member_on")
 
+
 # Membership reference date is the maximum of became_member_on feature
 def membership_reference_date() -> pd.Timestamp:
     """Latest membership date in the training data, used as 'today' for membership_days."""
     raw = read_json("profile.json")["became_member_on"].astype(str)
     return pd.to_datetime(raw, format="%Y%m%d").max()
 
+
 # Load customer data using clean_profile and membership_reference_date funcions
 def load_profile() -> pd.DataFrame:
     df = read_json("profile.json").rename(columns={"id": "person"})
     return clean_profile(df, membership_reference_date())
+
 
 # Import Event logs
 def load_transcript() -> pd.DataFrame:
@@ -86,7 +91,7 @@ def load_transcript() -> pd.DataFrame:
     # noisy key naming: 'offer id' for received/viewed, 'offer_id' for completed
     df["offer_id"] = df["value"].apply(lambda v: v.get("offer id", v.get("offer_id")))
     df["amount"] = df["value"].apply(lambda v: v.get("amount"))
-    
+
     return df.drop(columns="value")
 
 
@@ -127,42 +132,45 @@ def build_labels(events: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
     return rec[["person", "offer_id", "t_received", TARGET]]
 
 
+# What do I know about the customer at the moment when the offer arrives
 def add_history(labels: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
-    """Customer history at the moment of receiving the offer (only events strictly before t_received)."""
-    rec = labels.reset_index(drop=True).rename_axis("row_id").reset_index()
-    base = rec[["row_id", "person", "t_received"]]
+    rec = labels.reset_index(drop=True)
+    rec["row_id"] = rec.index
+    keys = rec[["row_id", "person", "t_received"]]
 
+    # Past transactions. Only the events before t_received, otherwise it would be leakage
     tx = events[events["event"] == "transaction"][["person", "time", "amount"]]
-    m = base.merge(tx, on="person")
-    g = m[m["time"] < m["t_received"]].groupby("row_id")
-    hist = pd.DataFrame({
-        "past_tx_count": g.size(),
-        "past_spend_total": g["amount"].sum(),
-        "past_spend_mean": g["amount"].mean(),
-        "past_spend_max": g["amount"].max(),
-        "last_tx_time": g["time"].max(),
-    })
+    past_tx = keys.merge(tx, on="person")
+    past_tx = past_tx[past_tx["time"] < past_tx["t_received"]]
+    g = past_tx.groupby("row_id")
 
-    vw = events[events["event"] == "offer viewed"][["person", "time"]]
-    mv = base.merge(vw, on="person")
-    hist["past_views"] = mv[mv["time"] < mv["t_received"]].groupby("row_id").size()
+    rec["past_tx_count"] = rec["row_id"].map(g.size()).fillna(0)
+    rec["past_spend_total"] = rec["row_id"].map(g["amount"].sum()).fillna(0)
+    rec["past_spend_mean"] = rec["row_id"].map(g["amount"].mean()) # NaN if the customer never bought before, LightGBM handles it
+    rec["past_spend_max"] = rec["row_id"].map(g["amount"].max())
 
-    rec = rec.merge(hist, left_on="row_id", right_index=True, how="left")
-    rec[["past_tx_count", "past_spend_total", "past_views"]] = \
-        rec[["past_tx_count", "past_spend_total", "past_views"]].fillna(0)
-    rec["days_since_last_tx"] = (rec["t_received"] - rec["last_tx_time"]) / 24
+    last_tx = rec["row_id"].map(g["time"].max())
+    rec["days_since_last_tx"] = (rec["t_received"] - last_tx) / 24 # time is in hours
 
+    # How many offers the customer opened before
+    viewed = events[events["event"] == "offer viewed"][["person", "time"]]
+    past_viewed = keys.merge(viewed, on="person")
+    past_viewed = past_viewed[past_viewed["time"] < past_viewed["t_received"]]
+    rec["past_views"] = rec["row_id"].map(past_viewed.groupby("row_id").size()).fillna(0)
+
+    # How many offers the customer got before, and what part of them was opened
     rec = rec.sort_values(["person", "t_received"])
     rec["past_offers_received"] = rec.groupby("person").cumcount()
     rec["past_view_rate"] = rec["past_views"] / rec["past_offers_received"].replace(0, np.nan)
 
-    return rec.drop(columns=["row_id", "last_tx_time"])
+    return rec.drop(columns="row_id")
+
 
 # Create final dataset
 def build_dataset() -> pd.DataFrame:
     offers, customers, events = load_portfolio(), load_profile(), load_transcript() # Load JSON data
     labels = build_labels(events, offers) # Create target variable based on event logs and offers
-    labels = add_history(labels, events)  
+    labels = add_history(labels, events) # Add the customer history features
     df = labels.merge(customers, on="person").merge(offers, on="offer_id") # Create final df
     return df[["person", "offer_id", "t_received"] + FEATURES + [TARGET]]
 
@@ -171,7 +179,14 @@ if __name__ == "__main__":
     data = build_dataset()
     data.to_csv(OUTPUT, index=False)
     print(f"Saved {len(data):,} rows to {OUTPUT}")
+
     print("\nSuccess rate by offer type:")
     print(data.groupby("offer_type")[TARGET].mean().round(3))
+
+    missing = data[FEATURES].isna().sum()
     print("\nMissing values:")
-    print(data[FEATURES].isna().sum()[lambda s: s > 0])
+    print(missing[missing > 0])
+
+    # The customers in the first wave have no history yet, so this must be 0
+    first_wave = data[data["t_received"] == 0]
+    print("\nPast transactions in the first wave (should be 0):", int(first_wave["past_tx_count"].sum()))
