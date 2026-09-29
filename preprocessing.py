@@ -12,8 +12,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 OUTPUT = DATA_DIR / "processed.csv"
 
 CHANNELS = ["email", "mobile", "social", "web"]
-HISTORY_FEATURES = ["past_tx_count", "past_spend_total", "past_spend_mean", "past_spend_max",
-                    "days_since_last_tx", "past_offers_received", "past_views", "past_view_rate"]
+HISTORY_FEATURES = ["past_tx_count", "past_spend_total", "past_spend_mean", "past_spend_max", "days_since_last_tx", "past_offers_received", "past_views", "past_view_rate"]
 CUSTOMER_FEATURES = ["age", "gender", "income", "income_missing", "membership_days"] + HISTORY_FEATURES
 OFFER_FEATURES = ["offer_type", "difficulty", "reward", "duration_days"] + [f"ch_{c}" for c in CHANNELS]
 FEATURES = CUSTOMER_FEATURES + OFFER_FEATURES
@@ -28,7 +27,6 @@ def add_interactions(X: pd.DataFrame) -> pd.DataFrame:
     X["reward_ratio"] = X["reward"] / difficulty  # how generous is the offer
     X["diff_per_day"] = X["difficulty"] / X["duration_days"]  # how much has to be spent per day
     return X
-
 
 def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
     """Feature matrix for the model. Fixed categories so training and prediction match (LightGBM handles pandas categoricals and NaN natively)."""
@@ -100,7 +98,7 @@ def build_labels(events: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
     """One row per received offer.
     Success = 1 if
     - the customer viewed it within the validity window, AND
-    - after viewing (still within the window) they
+    - after viewing they
         * completed it (bogo / discount), or
         * made any transaction (informational offers have no 'completed' event).
     """
@@ -144,10 +142,10 @@ def add_history(labels: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     past_tx = past_tx[past_tx["time"] < past_tx["t_received"]]
     g = past_tx.groupby("row_id")
 
-    rec["past_tx_count"] = rec["row_id"].map(g.size()).fillna(0)
-    rec["past_spend_total"] = rec["row_id"].map(g["amount"].sum()).fillna(0)
-    rec["past_spend_mean"] = rec["row_id"].map(g["amount"].mean()) # NaN if the customer never bought before, LightGBM handles it
-    rec["past_spend_max"] = rec["row_id"].map(g["amount"].max())
+    rec["past_tx_count"] = rec["row_id"].map(g.size()).fillna(0) # amount of previous transactions, 0 if the customer never bought before
+    rec["past_spend_total"] = rec["row_id"].map(g["amount"].sum()).fillna(0) # total amount spent in previous transactions, 0 if the customer never bought before
+    rec["past_spend_mean"] = rec["row_id"].map(g["amount"].mean()) # Avarage amount spent in previous transactions, NaN if the customer never bought before
+    rec["past_spend_max"] = rec["row_id"].map(g["amount"].max()) # Maximum amount spent in previous transactions, NaN if the customer never bought before
 
     last_tx = rec["row_id"].map(g["time"].max())
     rec["days_since_last_tx"] = (rec["t_received"] - last_tx) / 24 # time is in hours
@@ -180,13 +178,11 @@ if __name__ == "__main__":
     data.to_csv(OUTPUT, index=False)
     print(f"Saved {len(data):,} rows to {OUTPUT}")
 
-    print("\nSuccess rate by offer type:")
-    print(data.groupby("offer_type")[TARGET].mean().round(3))
+    print("\n-----")
+    print("Success rate by offer type:")
+    print(data.groupby('offer_type')[TARGET].mean().round(3))
 
+    print("\n-----")
     missing = data[FEATURES].isna().sum()
-    print("\nMissing values:")
+    print("Missing values:")
     print(missing[missing > 0])
-
-    # The customers in the first wave have no history yet, so this must be 0
-    first_wave = data[data["t_received"] == 0]
-    print("\nPast transactions in the first wave (should be 0):", int(first_wave["past_tx_count"].sum()))
