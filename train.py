@@ -1,7 +1,14 @@
-"""Train and evaluate the offer-success model:  python train.py
-
-Model: P(success | customer, offer). The next best offer for a customer is the offer
-with the highest predicted success probability.
+"""
+Train and evaluate the offer-success model.
+LightGBM claasifier is to estimate P(success | customer, offer).
+The next best offer for a customer is the offer with the highest predicted probability of success.
+For evaluation, the model's performance is compared against two baseline strategies:
+- the historical/random offer assignment success rate,
+- the best single-offer strategy, where the same offer is assigned to every customer.
+ 
+The resulting uplift shows the added value of personalized offer recommendations compared to simpler marketing approaches.
+Input: processed.csv
+Output: Classification metrics, Feature Importance, NBA metrics
 """
 import json
 import joblib
