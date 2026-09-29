@@ -12,18 +12,29 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 OUTPUT = DATA_DIR / "processed.csv"
 
 CHANNELS = ["email", "mobile", "social", "web"]
-CUSTOMER_FEATURES = ["age", "gender", "income", "income_missing", "membership_days"]
+
+HISTORY_FEATURES = ["past_tx_count", "past_spend_total", "past_spend_mean", "past_spend_max",
+                    "days_since_last_tx", "past_offers_received", "past_views", "past_view_rate"]
+
+CUSTOMER_FEATURES = ["age", "gender", "income", "income_missing", "membership_days"] + HISTORY_FEATURES
 OFFER_FEATURES = ["offer_type", "difficulty", "reward", "duration_days"] + [f"ch_{c}" for c in CHANNELS]
 FEATURES = CUSTOMER_FEATURES + OFFER_FEATURES
 TARGET = "success"
 CATEGORIES = {"gender": ["F", "M", "O", "U"], "offer_type": ["bogo", "discount", "informational"]}
 
-def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Feature matrix for the model. Fixed categories so training and prediction match (LightGBM handles pandas categoricals and NaN natively)."""
+def add_interactions(X: pd.DataFrame) -> pd.DataFrame:
+    diff = X["difficulty"].replace(0, np.nan)      # informational: difficulty = 0
+    X["spend_vs_diff"] = X["past_spend_mean"] / diff
+    X["max_spend_ge_diff"] = (X["past_spend_max"] >= X["difficulty"]).astype(float).where(X["past_spend_max"].notna())
+    X["reward_ratio"] = X["reward"] / diff
+    X["diff_per_day"] = X["difficulty"] / X["duration_days"]
+    return X
+
+def model_matrix(df):
     X = df[FEATURES].copy()
     for col, cats in CATEGORIES.items():
         X[col] = pd.Categorical(X[col], categories=cats)
-    return X
+    return add_interactions(X)
 
 def read_json(name: str) -> pd.DataFrame:
     """Import JSON files from DATA_DIR into a DataFrame."""
@@ -116,10 +127,42 @@ def build_labels(events: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
     return rec[["person", "offer_id", "t_received", TARGET]]
 
 
+def add_history(labels: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+    """Customer history at the moment of receiving the offer (only events strictly before t_received)."""
+    rec = labels.reset_index(drop=True).rename_axis("row_id").reset_index()
+    base = rec[["row_id", "person", "t_received"]]
+
+    tx = events[events["event"] == "transaction"][["person", "time", "amount"]]
+    m = base.merge(tx, on="person")
+    g = m[m["time"] < m["t_received"]].groupby("row_id")
+    hist = pd.DataFrame({
+        "past_tx_count": g.size(),
+        "past_spend_total": g["amount"].sum(),
+        "past_spend_mean": g["amount"].mean(),
+        "past_spend_max": g["amount"].max(),
+        "last_tx_time": g["time"].max(),
+    })
+
+    vw = events[events["event"] == "offer viewed"][["person", "time"]]
+    mv = base.merge(vw, on="person")
+    hist["past_views"] = mv[mv["time"] < mv["t_received"]].groupby("row_id").size()
+
+    rec = rec.merge(hist, left_on="row_id", right_index=True, how="left")
+    rec[["past_tx_count", "past_spend_total", "past_views"]] = \
+        rec[["past_tx_count", "past_spend_total", "past_views"]].fillna(0)
+    rec["days_since_last_tx"] = (rec["t_received"] - rec["last_tx_time"]) / 24
+
+    rec = rec.sort_values(["person", "t_received"])
+    rec["past_offers_received"] = rec.groupby("person").cumcount()
+    rec["past_view_rate"] = rec["past_views"] / rec["past_offers_received"].replace(0, np.nan)
+
+    return rec.drop(columns=["row_id", "last_tx_time"])
+
 # Create final dataset
 def build_dataset() -> pd.DataFrame:
     offers, customers, events = load_portfolio(), load_profile(), load_transcript() # Load JSON data
     labels = build_labels(events, offers) # Create target variable based on event logs and offers
+    labels = add_history(labels, events)  
     df = labels.merge(customers, on="person").merge(offers, on="offer_id") # Create final df
     return df[["person", "offer_id", "t_received"] + FEATURES + [TARGET]]
 
