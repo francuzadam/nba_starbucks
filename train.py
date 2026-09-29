@@ -4,27 +4,22 @@ Model: P(success | customer, offer). The next best offer for a customer is the o
 with the highest predicted success probability.
 """
 import json
-
 import joblib
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import GroupShuffleSplit
-
-from preprocessing import (CUSTOMER_FEATURES, DATA_DIR, OFFER_FEATURES, TARGET,
-                           load_portfolio, model_matrix)
+from preprocessing import CUSTOMER_FEATURES, DATA_DIR, OFFER_FEATURES, TARGET, load_portfolio, model_matrix
 
 ROOT = DATA_DIR.parent
 MODEL_PATH = ROOT / "model.joblib"
-SEED = 42
 PARAMS = dict(n_estimators=300, learning_rate=0.05, num_leaves=31, min_child_samples=50,
               subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-              random_state=SEED, verbose=-1)
-
-
+              random_state=42, verbose=-1)
+ 
 def score_all_offers(model, customers: pd.DataFrame, offers: pd.DataFrame) -> pd.DataFrame:
-    """P(success) of every offer for every customer (rows: customers, columns: offer_id)."""
+    """Calculate the probability of every offer for every customer."""
     rows = customers[CUSTOMER_FEATURES].reset_index(drop=True).rename_axis("row").reset_index()
     grid = rows.merge(offers[["offer_id"] + OFFER_FEATURES], how="cross")
     grid["p"] = model.predict_proba(model_matrix(grid))[:, 1]
@@ -34,14 +29,15 @@ def score_all_offers(model, customers: pd.DataFrame, offers: pd.DataFrame) -> pd
 def evaluate_nba(model, test, offers, best_single_offer) -> dict:
     """Offers were assigned roughly at random, so the observed success rate of customers
     who happened to receive the model's pick estimates how the model's policy would do."""
-    recommended = score_all_offers(model, test, offers).idxmax(axis=1).to_numpy()
-    got, y = test["offer_id"].to_numpy(), test[TARGET].to_numpy()
-    match = got == recommended
+    recommended = score_all_offers(model, test, offers).idxmax(axis=1).to_numpy() # NBA recommended offer
+    got = test["offer_id"].to_numpy() # real marketing offer
+    y = test[TARGET].to_numpy() # target variable
+    match = got == recommended # do the recommended and real offer march
     return {
-        "success_rate_random_offer": float(y.mean()),
-        "success_rate_best_single_offer": float(y[got == best_single_offer].mean()),
-        "success_rate_model_pick": float(y[match].mean()),
-        "rows_where_model_pick_was_sent": int(match.sum()),
+        "success_rate_random_offer": float(y.mean()), # the rate of previous and random offers
+        "success_rate_best_single_offer": float(y[got == best_single_offer].mean()), # if the best solution is offered for everyone
+        "success_rate_model_pick": float(y[match].mean()), # rate of nba model
+        "rows_where_model_pick_was_sent": int(match.sum()), # the predicted and the real offer is the same
     }
 
 
@@ -50,9 +46,10 @@ def main():
     offers = load_portfolio()
 
     # split by customer, so the same person never appears in both train and test
-    split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
+    split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     tr_idx, te_idx = next(split.split(df, groups=df["person"]))
-    train, test = df.iloc[tr_idx], df.iloc[te_idx].reset_index(drop=True)
+    train = df.iloc[tr_idx]
+    test = df.iloc[te_idx].reset_index(drop=True)
 
     model = LGBMClassifier(**PARAMS).fit(model_matrix(train), train[TARGET])
 
