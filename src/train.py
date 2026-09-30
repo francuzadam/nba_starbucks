@@ -7,7 +7,7 @@ For evaluation, the model's performance is compared against two baseline strateg
 - the best single-offer strategy, where the same offer is assigned to every customer.
 
 The resulting uplift shows the added value of personalized offer recommendations compared to simpler marketing approaches.
-Input: processed.csv
+Input: data/processed/processed.csv
 Output: Classification metrics, Feature Importance, NBA metrics
 """
 import json
@@ -19,12 +19,12 @@ import matplotlib.pyplot as plt
 from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score, roc_curve, auc
 from sklearn.model_selection import GroupShuffleSplit
-from preprocessing import CUSTOMER_FEATURES, DATA_DIR, OFFER_FEATURES, TARGET, load_portfolio, model_matrix
+from preprocessing import CUSTOMER_FEATURES, OFFER_FEATURES, PROCESSED_DIR, ROOT, TARGET, load_portfolio, model_matrix
 
 
-ROOT = DATA_DIR.parent
 OUTPUT_DIR = ROOT / "output"
-MODEL_PATH = ROOT / "model.joblib"
+MODEL_PATH = OUTPUT_DIR / "model.joblib"
+METRICS_PATH = OUTPUT_DIR / "metrics.json"
 PARAMS = dict(n_estimators=300, learning_rate=0.05, num_leaves=31, min_child_samples=50,
               subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
               random_state=42, verbose=-1)
@@ -103,7 +103,7 @@ def confusion_matrix(model, test) -> None:
 
 
 def main():
-    df = pd.read_csv(DATA_DIR / "processed.csv")
+    df = pd.read_csv(PROCESSED_DIR / "processed.csv")
     offers = load_portfolio()
 
     #Split by customer, so the same person never appears in both train and test
@@ -142,7 +142,7 @@ def main():
     roc_auc_curve(model, test)
     confusion_matrix(model, test)
     joblib.dump(model, MODEL_PATH)
-    (ROOT / "metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
+    METRICS_PATH.write_text(json.dumps(metrics, indent=2, default=float))
     print(f"\nModel saved to {MODEL_PATH}")
 
 

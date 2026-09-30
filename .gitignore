@@ -6,11 +6,11 @@ venv/
 .ipynb_checkpoints/
 
 # Data (download separately, see README)
-data/*.json
-data/processed.csv
+data/raw/*.json
+data/processed/*.csv
 
 # Generated artefacts
-model.joblib
+output/model.joblib
 
 # OS / editor
 .DS_Store

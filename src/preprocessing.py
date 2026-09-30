@@ -1,15 +1,18 @@
 """
 Preprocessing for the Next Best Action based on Starbucks dataset .
-Reads the 3 raw JSON files from data folder, cleans them, builds the target variable from the event log and writes one modelling table: one row per customer, received offer.
-Input: python preprocessing.py 
-Output: data/processed.csv
+Reads the 3 raw JSON files from data/raw, cleans them, builds the target variable from the event log and writes one modelling table: one row per customer, received offer.
+Input: python src/preprocessing.py
+Output: data/processed/processed.csv
 """
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-OUTPUT = DATA_DIR / "processed.csv"
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+RAW_DIR = DATA_DIR / "raw"
+PROCESSED_DIR = DATA_DIR / "processed"
+OUTPUT = PROCESSED_DIR / "processed.csv"
 
 CHANNELS = ["email", "mobile", "social", "web"]
 HISTORY_FEATURES = ["past_tx_count", "past_spend_total", "past_spend_mean", "past_spend_max", "days_since_last_tx", "past_offers_received", "past_views", "past_view_rate"]
@@ -37,8 +40,8 @@ def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def read_json(name: str) -> pd.DataFrame:
-    """Import JSON files from DATA_DIR into a DataFrame."""
-    return pd.read_json(DATA_DIR / name, orient="records", lines=True)
+    """Import JSON files from RAW_DIR into a DataFrame."""
+    return pd.read_json(RAW_DIR / name, orient="records", lines=True)
 
 
 # Import porfolio JSON applying One-Hot Encoding
@@ -163,6 +166,14 @@ def add_history(labels: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
 
     return rec.drop(columns="row_id")
 
+# A new customer has no event history yet, same situation as the first wave during training
+def add_empty_history(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for col in ["past_tx_count", "past_spend_total", "past_views", "past_offers_received"]:
+        df[col] = 0.0
+    for col in ["past_spend_mean", "past_spend_max", "days_since_last_tx", "past_view_rate"]:
+        df[col] = np.nan
+    return df
 
 # Create final dataset
 def build_dataset() -> pd.DataFrame:
@@ -172,9 +183,9 @@ def build_dataset() -> pd.DataFrame:
     df = labels.merge(customers, on="person").merge(offers, on="offer_id") # Create final df
     return df[["person", "offer_id", "t_received"] + FEATURES + [TARGET]]
 
-
-if __name__ == "__main__":
+def main():
     data = build_dataset()
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     data.to_csv(OUTPUT, index=False)
     print(f"Saved {len(data):,} rows to {OUTPUT}")
 
@@ -186,3 +197,6 @@ if __name__ == "__main__":
     missing = data[FEATURES].isna().sum()
     print("Missing values:")
     print(missing[missing > 0])
+
+if __name__ == "__main__":
+    main()

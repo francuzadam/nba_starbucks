@@ -7,7 +7,7 @@ Output: the recommended offer and its predicted success probability per customer
 import joblib
 import pandas as pd
 
-from preprocessing import clean_profile, load_portfolio, membership_reference_date
+from preprocessing import add_empty_history, clean_profile, load_portfolio, membership_reference_date
 from train import MODEL_PATH, score_all_offers
 
 
@@ -17,7 +17,7 @@ def predict_next_best_action(customers: pd.DataFrame, min_probability: float = 0
     model = joblib.load(MODEL_PATH)
     offers = load_portfolio().set_index("offer_id")
 
-    X = clean_profile(customers, membership_reference_date())
+    X = add_empty_history(clean_profile(customers, membership_reference_date()))
     probs = score_all_offers(model, X, offers.reset_index())
 
     best_offer = probs.idxmax(axis=1)
@@ -31,10 +31,13 @@ def predict_next_best_action(customers: pd.DataFrame, min_probability: float = 0
     return result.join(details, on="recommended_offer")
 
 
-if __name__ == "__main__":
+def main():
     new_customers = pd.DataFrame([
         {"id": "new_1", "age": 34, "gender": "F", "income": 85000.0, "became_member_on": 20170301},
         {"id": "new_2", "age": 62, "gender": "M", "income": 45000.0, "became_member_on": 20180601},
         {"id": "new_3", "age": 118, "gender": None, "income": None, "became_member_on": 20160115},
     ])
-    print(predict_next_best_action(new_customers, min_probability=0.3).to_string(index=False))
+    print(predict_next_best_action(new_customers, min_probability=0.4).to_string(index=False))
+
+if __name__ == "__main__":
+    main()
