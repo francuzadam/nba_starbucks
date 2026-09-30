@@ -59,18 +59,6 @@ The processed dataset and the trained model are already included, so `python run
 
 The scripts in `src/` can also be run on their own, for example `python src/train.py`.
 
-To get recommendations from your own code (with `src/` on the Python path):
-
-```python
-import pandas as pd
-from predict import predict_next_best_action
-
-customers = pd.DataFrame([
-    {"id": "c1", "age": 34, "gender": "F", "income": 85000.0, "became_member_on": 20170301},
-])
-predict_next_best_action(customers, min_probability=0.4)
-```
-
 ## Method
 
 **Target variable.** One row is one received offer. The offer counts as a success when the customer viewed it within its validity window and then:
