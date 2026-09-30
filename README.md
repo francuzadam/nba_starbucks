@@ -29,7 +29,9 @@ nba-starbucks/
 
 ## Data
 
-The project uses the Starbucks rewards app dataset (simulated customer behaviour, from the Udacity Data Scientist capstone). The three raw files are included in `data/raw/`:
+The project uses the Starbucks rewards app dataset, which simulates customer behaviour. It was downloaded from Kaggle: https://www.kaggle.com/datasets/mexwell/starbucks-offers-advertisement-data
+
+The three raw files are included in `data/raw/`:
 
 | File | Content |
 |---|---|
@@ -80,7 +82,7 @@ From `output/metrics.json`:
 | Classification | Value |
 |---|---|
 | ROC AUC | 0.804 |
-| Accuracy | 0.738 (baseline of always predicting the majority class: 0.606) |
+| Accuracy | 0.738 |
 | Precision | 0.686 |
 | Recall | 0.619 |
 
