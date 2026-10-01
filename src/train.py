@@ -139,8 +139,14 @@ def main():
     print(json.dumps(metrics, indent=2, default=float))
 
     feature_importance(model)
+    print("\nFeature importance plot saved to output/feature_importance.png")
+    
     roc_auc_curve(model, test)
+    print("\nROC AUC curve plot saved to output/roc_auc_curve.png")
+    
     confusion_matrix(model, test)
+    print("\nConfusion matrix plot saved to output/confusion_matrix.png")
+
     joblib.dump(model, MODEL_PATH)
     METRICS_PATH.write_text(json.dumps(metrics, indent=2, default=float))
     print(f"\nModel saved to {MODEL_PATH}")
