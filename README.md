@@ -43,8 +43,7 @@ The three raw files are included in `data/raw/`:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS / Linux
+.venv\Scripts\activate    
 pip install -r requirements.txt
 ```
 
